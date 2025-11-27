@@ -15,7 +15,7 @@ synaptic_plasticity_model.ipynb:
 - model synaptic sign switching using sign-switching task
 - compare Dale's Law network vs. co-release circuit
 
-synaptic_plasticity_neuron_constraint.ipynb:
+neuron_constraint.ipynb:
 
 - sequentially reduce the number of updatable weights
 - compare learning in Dale's Law network vs. co-release circuit as we reduce the number of active weights.
