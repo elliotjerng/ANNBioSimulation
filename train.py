@@ -8,8 +8,9 @@ from torch.nn.utils import clip_grad_value_
 from copy import deepcopy
 import wandb
 from collections import Counter
-
+from torch.optim import Adam
 from model_setup import TopKLinear
+
 
 
 def calculate_distance(stim_label_batch, og_label_batch, outputs, distance_dict):
@@ -153,6 +154,97 @@ class CustomWeightDecayOptimizer(object):
             if param.requires_grad:
                 param.data -= lr * self.weight_decay * param.data
         self.optimizer.step()
+
+class CustomAdam(Adam):
+    def __init__(self, model, params, lr=1e-3, betas=(0.9, 0.999), eps=1e-8, weight_decay=0, amsgrad=False, updatable_weights=0.01, mask_dict = None):
+        super().__init__(params, lr=lr, betas=betas, eps=eps, weight_decay=weight_decay, amsgrad=amsgrad)
+        self.updatable_weights = updatable_weights
+        self.param_to_name = {param: name for name, param in model.named_parameters()} if model else {}
+        self.p_count = 0 # for debugging
+        self.mask_dict = mask_dict if mask_dict is not None else {}
+
+    def step(self, closure=None):
+        """Performs a single optimization step."""
+        
+        loss = None
+        if closure is not None:
+            loss = closure()
+
+
+        for group in self.param_groups:
+            for p in group['params']:
+                if p.grad is None:
+                    continue
+
+                grad = p.grad.data
+                if grad.is_sparse:
+                    raise RuntimeError('Adam does not support sparse gradients')
+
+                state = self.state[p]
+
+                # State initialization
+                if len(state) == 0:
+                    state['step'] = 0
+                    # Exponential moving average of gradient values
+                    state['exp_avg'] = torch.zeros_like(p.data, memory_format=torch.preserve_format)
+                    # Exponential moving average of squared gradient values
+                    state['exp_avg_sq'] = torch.zeros_like(p.data, memory_format=torch.preserve_format)
+                    if group['amsgrad']:
+                        # Maintains the maximum of all 2nd moment running avg. till now
+                        state['max_exp_avg_sq'] = torch.zeros_like(p.data, memory_format=torch.preserve_format)
+
+                exp_avg, exp_avg_sq = state['exp_avg'], state['exp_avg_sq']
+                if group['amsgrad']:
+                    max_exp_avg_sq = state['max_exp_avg_sq']
+                beta1, beta2 = group['betas']
+
+                state['step'] += 1
+
+                # Decay the first and second moment running average coefficient
+                exp_avg.mul_(beta1).add_(grad, alpha=1 - beta1)
+                exp_avg_sq.mul_(beta2).addcmul_(grad, grad, value=1 - beta2)
+                if group['amsgrad']:
+                    # Maintains the maximum of all 2nd moment running avg. till now
+                    torch.max(max_exp_avg_sq, exp_avg_sq, out=max_exp_avg_sq)
+                    # Use the max. for normalizing running avg. of gradient
+                    denom = (max_exp_avg_sq.sqrt() / math.sqrt(bias_correction2)).add_(group['eps'])
+                else:
+                    denom = (exp_avg_sq.sqrt() / math.sqrt(1 - beta2 ** state['step'])).add_(group['eps'])
+
+                step_size = group['lr'] / (1 - beta1 ** state['step'])
+            
+                param_name = self.param_to_name.get(p, "Unknown Parameter")
+                
+                # first p.data recording - should stay the same throughout training
+                # if param_name == 'LHb.pre_w_pos':
+                #     print("STEP sanity check")
+                #     if self.p_count == 0:
+                #         self.og_p = p.data.clone()
+                #         self.p_count += 1
+                
+
+                # Apply mask for updatable weights
+                if self.updatable_weights < 1.0:
+                    # if param_name == 'LHb.pre_w_pos': 
+                    #     pre_p = p.data.clone()
+
+                    # for each parameter, create a mask if it doesn't exist
+                    if param_name not in self.mask_dict:
+                        self.mask_dict[param_name] = (torch.rand_like(p.data) < self.updatable_weights).float()
+                    # apply specific param mask to the update
+                    p.data.addcdiv_(exp_avg * self.mask_dict[param_name], denom, value=-step_size)
+
+                    # if param_name == 'LHb.pre_w_pos':
+                    #     post_p = p.data.clone()
+                    #     print(f"percent of unchanged values of original p.data and post update p.data: {(self.og_p == post_p).sum().item()/post_p.numel()}")
+                    #     print(f"percent of unchanged values of pre update p.data and post update p.data: {(pre_p == post_p).sum().item()/post_p.numel()}")
+                    #     print("first p.data recording:", self.og_p)
+                    #     print("pre update p.data:", pre_p)
+                    #     print("post update p.data:", post_p)
+                else:
+                    p.data.addcdiv_(exp_avg, denom, value=-step_size)
+
+        return loss
 
 class TrainerMLE(object):
     """
