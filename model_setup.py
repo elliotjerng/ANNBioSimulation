@@ -37,9 +37,9 @@ class TopKLinear(nn.Module):
         The number of strongest synapses to keep per dendritic branch.
 
     param_space : str, optional
-        The parameter space for the weights. Options are 'log' and 'presigmoid'.
+        The parameter space for the weights. Options are 'log' and 'sigmoid'.
         If `'log'`, the weights are parameterized as exponentials of `pre_w`.
-        If `'presigmoid'`, the weights are parameterized as sigmoids of `pre_w`.
+        If `'sigmoid'`, the weights are parameterized as sigmoids of `pre_w`.
         Defaults to 'log'.
     
     Attributes
@@ -102,10 +102,20 @@ class TopKLinear(nn.Module):
         init_method='xavier_normal',
         sign_pattern='mixed',  # Default: mixed signs
         update_sign=False,  # Default: sign matrix is not trainable
+        dales_law=False,  # Default: no Dale's law
+        pos_neg_layer=False
     ):
         super(TopKLinear, self).__init__()
-        self.pre_w = nn.Parameter(
-            torch.empty((out_features, in_features)), requires_grad=True)
+        self.pos_neg_layer = pos_neg_layer
+        if self.pos_neg_layer:
+            self.pre_w_pos = nn.Parameter(
+                torch.empty((out_features, in_features)), requires_grad=True)
+            self.pre_w_neg = nn.Parameter(
+                torch.empty((out_features, in_features)), requires_grad=True)
+
+        else:
+            self.pre_w = nn.Parameter(
+                torch.empty((out_features, in_features)), requires_grad=True)
 
         self.sign_matrix = nn.Parameter(
             torch.empty((out_features, in_features)), requires_grad=False)
@@ -115,10 +125,13 @@ class TopKLinear(nn.Module):
         self.init_method = init_method
         self.update_sign = update_sign # update sign based on gradient
         self.layer = layer
+        self.sign_pattern = sign_pattern
+        self.dales_law = dales_law
 
         self.initialize_signs(sign_pattern)
         self.initialize_weights()
         self.final_weight = self.weight().detach()
+        
 
     def initialize_signs(self, sign_pattern):
         """Initialize the sign matrix based on the desired pattern."""
@@ -136,7 +149,12 @@ class TopKLinear(nn.Module):
         """Initialize the raw weights using the specified method."""
         if self.init_method in TOPK_INIT_METHODS:
             init_func = TOPK_INIT_METHODS[self.init_method]
-            init_func(self.pre_w)
+            if self.pos_neg_layer:
+                init_func(self.pre_w_pos)
+                init_func(self.pre_w_neg)
+            else:
+                init_func(self.pre_w)
+
             #TODO: Accept hyperparameters for initialization
             # init_func(self.pre_w, **self.init_params) 
         else:
@@ -144,34 +162,50 @@ class TopKLinear(nn.Module):
                 f"Invalid initialization method: {self.init_method}. "
                 f"Choose from {list(TOPK_INIT_METHODS.keys())}")
 
+
     def forward(self, x):
         """Perform the forward pass."""
         final_weight = self.weight()
         # matrix multiply inputs and synaptic weights
         mm = torch.mm(x, final_weight.t())
         
-        # apply non-linearity except for LHb
-        if self.layer == "LHb":
-            return mm
-        else:
-            return torch.sigmoid(mm)
+        # apply non-linearity
+        return torch.sigmoid(mm)
+
+
         
-    
     def weight(self):
         """Return the final weights."""
+        if self.pos_neg_layer:
+            weight_pos = self.transform_weight(self.pre_w_pos)
+            weight_neg = self.transform_weight(self.pre_w_neg)
+            # final weight = (+weight pos) + (-weight neg)
+            final_weight = weight_pos - weight_neg
+            if self.dales_law:
+                final_weight = abs(weight_pos - weight_neg) * self.sign_matrix
+            self.final_weight = (final_weight).detach()
+            return final_weight
+        else:
+            final_weight = self.transform_weight(self.pre_w)
+            if self.dales_law:
+                final_weight = abs(final_weight) * self.sign_matrix
+            self.final_weight = final_weight.detach()
+            return final_weight
+    
+    def transform_weight(self, weight):
+        """Return the transformed weights before matrix multiplication."""
         if self.param_space == 'log':
-            final_weight = self.pre_w.exp() * self.sign_matrix
-        elif self.param_space == 'presigmoid':
-            final_weight = torch.sigmoid(self.pre_w)
-        elif self.param_space == "tanh":
-            final_weight = torch.tanh(self.pre_w)
-        elif self.param_space == "raw":
-            final_weight = self.pre_w
+            trans_weight = weight.exp() * self.sign_matrix
+        elif self.param_space == 'sigmoid':
+            trans_weight = torch.sigmoid(weight)
+        elif self.param_space == 'tanh':
+            trans_weight = torch.tanh(weight)
+        elif self.param_space == 'relu':
+            trans_weight = torch.relu(weight)
+        elif self.param_space == 'raw':
+            trans_weight = weight
 
-        # scale weight
-        #final_weight = final_weight * 0.01
-        self.final_weight = final_weight.detach()
-        return final_weight
+        return trans_weight
     
     def update_signs(self):
         """
@@ -213,13 +247,24 @@ class Corelease_Model(nn.Module):
                  combine_EI=False, dales_law=False, opto_neuron_percent=0.4, batch_size=256, 
                  opto_on=False, log_weights=True):
         super().__init__()
+        # dale's law
+        if dales_law:
+            self.EP = TopKLinear(in_features=in_features, out_features=h1, K=100, layer = "EP", param_space = "raw", sign_pattern="mixed", dales_law=True, pos_neg_layer=False)
+            self.bn1 = nn.BatchNorm1d(h1)
+            self.LHb = TopKLinear(in_features=h1, out_features=h2, K=100, layer = "LHb", param_space = "raw", sign_pattern="mixed", dales_law=True, pos_neg_layer=False)
+            self.bn2 = nn.BatchNorm1d(h2)
+            if dropout_rate != 0: self.dropout = nn.Dropout(dropout_rate)
+            self.DAN = TopKLinear(in_features=h2, out_features=out_features,  K=100, layer = "DAN", param_space = "raw", sign_pattern="negative", dales_law=True, pos_neg_layer=False)
 
-        self.EP = TopKLinear(in_features=in_features, out_features=h1, K=100, layer = "EP", param_space = "log", sign_pattern="mixed", update_sign=False)
-        self.bn1 = nn.BatchNorm1d(h1)
-        self.LHb = TopKLinear(in_features=h1, out_features=h2, K=100, layer = "LHb", param_space = "tanh")
-        self.bn2 = nn.BatchNorm1d(h2)
-        if dropout_rate != 0: self.dropout = nn.Dropout(dropout_rate)
-        self.DAN = TopKLinear(in_features=h2, out_features=out_features,  K=100, layer = "DAN", param_space = "log", sign_pattern="negative", update_sign=False)
+        # corelease
+        else:
+            self.EP = TopKLinear(in_features=in_features, out_features=h1, K=100, layer = "EP", param_space = "raw", sign_pattern="mixed", dales_law=False, pos_neg_layer=True)
+            self.bn1 = nn.BatchNorm1d(h1)
+            self.LHb = TopKLinear(in_features=h1, out_features=h2, K=100, layer = "LHb", param_space = "raw", sign_pattern="mixed", dales_law=False, pos_neg_layer=True)
+            self.bn2 = nn.BatchNorm1d(h2)
+            if dropout_rate != 0: self.dropout = nn.Dropout(dropout_rate)
+            self.DAN = TopKLinear(in_features=h2, out_features=out_features,  K=100, layer = "DAN", param_space = "raw", sign_pattern="negative", dales_law=True, pos_neg_layer=False)
+
 
         self.opto_on = opto_on
         self.opto_neuron_percent = opto_neuron_percent
@@ -265,7 +310,7 @@ class Corelease_Model(nn.Module):
         # Return logits for inference
         return x
 
-    def record_params(self, calc_sign: bool = True):
+    def record_params(self, calc_sign: bool = True, print_sign: bool = False):
         """ Save the network weights. """
         recorded_params = {}
 
@@ -273,11 +318,24 @@ class Corelease_Model(nn.Module):
         for name, module in self.named_modules():
             if isinstance(module, TopKLinear):  # Check if it's a TopKLinear layer
                 # Store pre_w
-                if module.pre_w.requires_grad:
-                    with torch.no_grad():
-                        recorded_params[name + '.pre_w'] = module.pre_w.data.detach().cpu().clone()
+                if module.pos_neg_layer:
+                    if module.pre_w_pos.requires_grad:
+                        with torch.no_grad():
+                            recorded_params[name + '.pre_w_pos'] = module.pre_w_pos.data.detach().cpu().clone()
+                    else:
+                        recorded_params[name + '.pre_w_pos'] = module.pre_w_pos.data.detach().cpu().clone()
+
+                    if module.pre_w_neg.requires_grad:
+                        with torch.no_grad():
+                            recorded_params[name + '.pre_w_neg'] = module.pre_w_neg.data.detach().cpu().clone()
+                    else:
+                        recorded_params[name + '.pre_w_neg'] = module.pre_w_neg.data.detach().cpu().clone()
                 else:
-                    recorded_params[name + '.pre_w'] = module.pre_w.data.detach().cpu().clone()
+                    if module.pre_w.requires_grad:
+                        with torch.no_grad():
+                            recorded_params[name + '.pre_w'] = module.pre_w.data.detach().cpu().clone()
+                    else:
+                        recorded_params[name + '.pre_w'] = module.pre_w.data.detach().cpu().clone()
 
                 # Store sign_matrix
                 if module.sign_matrix.requires_grad:

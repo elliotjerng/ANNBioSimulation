@@ -7,48 +7,47 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pickle
 from torch.utils.data import DataLoader, TensorDataset
-
+import math
 from model_setup import TopKLinear
 
 
 def weight_changes(initial_params, trained_params):
     """
-    Plot initial weights vs trained weights for all layers.
+    initial weights vs trained weights plot for all layers
     
-    Parameters
-    ----------
-    initial_params : dict
-        Dictionary of initial parameter tensors.
-    trained_params : dict
-        Dictionary of trained parameter tensors.
     """
-    # What fraction of parameters flip sign?
+    #@title What fraction of parameters flip sign?
     for key in initial_params:
-        n_weights = initial_params[key].numel()
-        n_flip = (initial_params[key].sign() * trained_params[key].sign() < 0).count_nonzero().item()
-        print(key + ' flipped: % .2f%% (%d/%d)' % (100 * n_flip / n_weights, n_flip, n_weights))
+        n_weights=initial_params[key].numel()
+        n_flip = (initial_params[key].sign()*trained_params[key].sign()<0).count_nonzero().item()
+        print(key + ' flipped: % .2f%% (%d/%d)' %(100*n_flip/n_weights, n_flip, n_weights))
 
     for key in initial_params:
-        n_weights = initial_params[key].numel()
+        n_weights=initial_params[key].numel()
         n_changed = (initial_params[key] != trained_params[key]).count_nonzero().item()
-        print(key + ' changed: % .2f%% (%d/%d)' % (100 * n_changed / n_weights, n_changed, n_weights))
+        print(key + ' changed: % .2f%% (%d/%d)' %(100*n_changed/n_weights, n_changed, n_weights))
 
     # Plot initial vs trained values
-    fig, axs = plt.subplots(3, int(len(trained_params) / 3), figsize=(20, 7))
+
+    fig, axs = plt.subplots(3,int(math.ceil(len(trained_params)/3)),figsize=(20, 7))
     plt.subplots_adjust(hspace=0.5)
 
+    ax = 0
     for i, ax in enumerate(axs.flatten()):
+        if i >= len(trained_params):
+            ax.axis('off')
+            continue
         key = list(initial_params)[i]
-        ax.scatter(initial_params[key].numpy(), trained_params[key].numpy(), s=10, alpha=0.5)
-        ax.axhline(y=0, linewidth=2, color='r', ls='--')
-        ax.axvline(x=0, linewidth=2, color='r', ls='--')
+        ax.scatter(initial_params[key].numpy(),trained_params[key].numpy(),s=10,alpha=0.5)
+        ax.axhline(y=0, linewidth=2, color = 'r', ls='--')
+        ax.axvline(x=0, linewidth=2, color = 'r', ls='--')
         ax.set_title(key)
 
     plt.tight_layout()
     plt.show()
 
 
-def plot_distance(results, name):
+def plot_distance(results, name, plot, opto_abs_distance=None, opto_category=4):
     """
     Plot distance/error metrics for each category.
     
@@ -58,33 +57,53 @@ def plot_distance(results, name):
         Dictionary containing 'best distance dict' with category errors.
     name : str
         Name for the plot title.
+    plot : bool
+        Whether to display the plot.
+    opto_abs_distance : list, optional
+        List to append the opto category's absolute distance to.
+    opto_category : int, optional
+        The category ID to extract distance for. Default is 4.
     """
     # Extract keys and values
-    keys = list(results["best distance dict"].keys())
-    values = list(results["best distance dict"].values())
+    distance_dict = results["best distance dict"]
+    keys = list(distance_dict.keys())
+    values = list(distance_dict.values())
 
     # Plot
-    plt.figure(figsize=(10, 6))
-    plt.bar(keys, values, color='skyblue')
+    if plot:
+        plt.figure(figsize=(10, 6))
+        plt.bar(keys, values, color='skyblue')
 
-    # Add labels and title
-    plt.xlabel("Category", fontsize=12)
-    plt.ylabel("Absolute Error", fontsize=12)
-    plt.title(f'Best Absolute Error/Accuracy: Epoch {results["best epoch"]} ({name})', fontsize=14)
+        # Add labels and title
+        plt.xlabel("Category", fontsize=12)
+        plt.ylabel("Absolute Error", fontsize=12)
+        plt.title(f'Best Absolute Error/Accuracy: Epoch {results["best epoch"]} ({name})', fontsize=14)
 
-    # Customize ticks
-    plt.xticks(keys, fontsize=10)
-    plt.yticks(fontsize=10)
+        # Customize ticks
+        plt.xticks(keys, fontsize=10)
+        plt.yticks(fontsize=10)
 
-    # Display grid for clarity
-    plt.grid(axis='y', linestyle='--', alpha=0.7)
+        # Display grid for clarity
+        plt.grid(axis='y', linestyle='--', alpha=0.7)
 
-    # Show the plot
-    plt.tight_layout()
-    plt.show()
+        # Show the plot
+        plt.tight_layout()
+        plt.show()
+    
+    # Append opto category distance if list is provided
+    if opto_abs_distance is not None:
+        # Use the actual category key, not index
+        if opto_category in distance_dict:
+            opto_abs_distance.append(distance_dict[opto_category])
+        else:
+            # Fallback: if category not found, append None or 0
+            opto_abs_distance.append(None)
+            print(f"Warning: Category {opto_category} not found in distance dict. Keys: {keys}")
+
+    return opto_abs_distance
 
 
-def plot_loss(results):
+def plot_loss(results, plot, min_train_loss=None):
     """
     Plot training and validation losses.
     
@@ -92,25 +111,36 @@ def plot_loss(results):
     ----------
     results : dict
         Dictionary containing 'train losses' and 'valid losses'.
+    plot : bool
+        Whether to display the plot.
+    min_train_loss : list, optional
+        List to append the minimum training loss to.
     """
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
+    if plot:
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
+
+        ax1.plot(results["train losses"])
+        ax1.set_xlabel("Epochs")
+        ax1.set_ylabel("Training Loss")
+        ax1.set_title("Training Loss")
+        ax1.set_xticks(range(0, len(results["train losses"])))
+        ax1.tick_params(axis='x', rotation=45, labelsize=8)
+        
+        ax2.plot(results["valid losses"])
+        ax2.set_xlabel("Epochs")
+        ax2.set_ylabel("Valid Loss")
+        ax2.set_title("Valid Loss")
+        ax2.set_xticks(range(0, len(results["train losses"])))
+        ax2.tick_params(axis='x', rotation=45, labelsize=6)
+        
+        plt.tight_layout()
+        plt.show()
     
-    ax1.plot(results["train losses"])
-    ax1.set_xlabel("Epochs")
-    ax1.set_ylabel("Training Loss")
-    ax1.set_title("Training Loss")
-    ax1.set_xticks(range(0, len(results["train losses"])))
-    ax1.tick_params(axis='x', rotation=45, labelsize=8)
-    
-    ax2.plot(results["valid losses"])
-    ax2.set_xlabel("Epochs")
-    ax2.set_ylabel("Valid Loss")
-    ax2.set_title("Valid Loss")
-    ax2.set_xticks(range(0, len(results["train losses"])))
-    ax2.tick_params(axis='x', rotation=45, labelsize=6)
-    
-    plt.tight_layout()
-    plt.show()
+    # Append minimum training loss if list is provided
+    if min_train_loss is not None:
+        min_train_loss.append(min(results["train losses"]))
+
+    return min_train_loss
 
 
 def generate_opto_loader(dataloader, opto_category, plot=False):
@@ -218,7 +248,8 @@ def plot_layer_activation(activations,
                           plot=[True, True, True],
                           layers=["EP", "LHb", "DAN"],
                           labels=["random", "reward", "punish"],
-                          colors=["lightblue", "blue", "red"]):
+                          colors=["lightblue", "blue", "red"],
+                          mean_DAN_activations = None):
     """
     Plot activation distributions for different layers and conditions.
     
@@ -235,6 +266,7 @@ def plot_layer_activation(activations,
     colors : list, optional
         List of colors for each condition. Default is ["lightblue", "blue", "red"].
     """
+    
     fig, axs = plt.subplots(1, 3, figsize=(20, 7), sharex=False, sharey=False)
     activations = [activations[i] for i in range(len(activations)) if plot[i]]
     labels = [labels[i] for i in range(len(activations)) if plot[i]]
@@ -248,6 +280,8 @@ def plot_layer_activation(activations,
             
             # Calculate mean activation and add a vertical line
             mean_activation = act.mean()
+            if layer == "DAN" and mean_DAN_activations is not None:
+                mean_DAN_activations.append(mean_activation.item())
             axs[i].axvline(mean_activation, color=colors[d], linestyle='--', linewidth=2, 
                            label=f"{labels[d]} mean: {mean_activation:.2f}")
             
@@ -257,6 +291,9 @@ def plot_layer_activation(activations,
 
     plt.tight_layout()
     plt.show()
+
+    if mean_DAN_activations is not None:
+        return mean_DAN_activations
 
 
 def scatterboxplot(data, labels, ax, vert=True, colors=["lightblue", "blue", "red"], jitter=0.02):
