@@ -249,6 +249,7 @@ def plot_layer_activation(activations,
                           layers=["EP", "LHb", "DAN"],
                           labels=["random", "reward", "punish"],
                           colors=["lightblue", "blue", "red"],
+                          show_plot=True,
                           mean_DAN_activations = None):
     """
     Plot activation distributions for different layers and conditions.
@@ -290,7 +291,10 @@ def plot_layer_activation(activations,
         axs[i].set_xlabel("Activation Value")
 
     plt.tight_layout()
-    plt.show()
+    if show_plot:
+        plt.show()
+    else:
+        plt.close(fig)
 
     if mean_DAN_activations is not None:
         return mean_DAN_activations
@@ -899,4 +903,104 @@ def plot_EI_index_distribution(metrics_dict, plot_random=True,
     
     plt.tight_layout()
     plt.show()
+
+
+def updatable_weights_plot(updatable_weights_ls, min_train_loss_by_dales, opto_abs_distance_by_dales, mean_DAN_activations_by_dales):
+
+    updatable_weights_ls = [x * 100 for x in updatable_weights_ls]
+    
+    fig, axs = plt.subplots(3, 3, figsize=(20, 15))
+    plt.subplots_adjust(hspace=0.4, wspace=0.3)
+    
+    phases = ['random', 'reward', 'punish']
+    phase_labels = ['Random', 'Reward', 'Punish']
+    phase_colors = {'random': 'lightblue', 'reward': 'blue', 'punish': 'red'}
+    dales_labels = {True: "Dale's Law", False: 'Co-release'}
+    dales_alpha = {True: 0.5, False: 1.0}
+
+    # Row 0: Lowest Training Loss
+    row_idx = 0
+    for col_idx, (phase, phase_label) in enumerate(zip(phases, phase_labels)):
+        ax = axs[row_idx, col_idx]
+        for dales_law in [True, False]:
+            if phase in min_train_loss_by_dales[dales_law] and len(min_train_loss_by_dales[dales_law][phase]) > 0:
+                ax.plot(
+                    updatable_weights_ls,
+                    min_train_loss_by_dales[dales_law][phase],
+                    label=dales_labels[dales_law],
+                    color=phase_colors[phase],
+                    linestyle='-',
+                    linewidth=2,
+                    marker='o',
+                    markersize=2,
+                    alpha=dales_alpha[dales_law]
+                )
+        ax.legend()
+        ax.set_title(f"Lowest Training Loss - {phase_label}")
+        if col_idx == 0:
+            ax.set_ylabel("Lowest Training Loss")
+        ax.set_xlabel("Updatable Weights (%)")   # <-- added
+        ax.set_xticks(updatable_weights_ls)
+        ax.ticklabel_format(style='plain', axis='x')
+        ax.tick_params(axis='x', rotation=45, labelsize=9)
+        ax.grid(True, alpha=0.3)
+    
+    # Row 1: Opto Absolute Distance
+    row_idx = 1
+    for col_idx, (phase, phase_label) in enumerate(zip(phases, phase_labels)):
+        ax = axs[row_idx, col_idx]
+        for dales_law in [True, False]:
+            if phase in opto_abs_distance_by_dales[dales_law] and len(opto_abs_distance_by_dales[dales_law][phase]) > 0:
+                ax.plot(
+                    updatable_weights_ls,
+                    opto_abs_distance_by_dales[dales_law][phase],
+                    label=dales_labels[dales_law],
+                    color=phase_colors[phase],
+                    linestyle='-',
+                    linewidth=2,
+                    marker='o',
+                    markersize=2,
+                    alpha=dales_alpha[dales_law]
+                )
+        ax.legend()
+        ax.set_title(f"Opto Absolute Distance - {phase_label}")
+        if col_idx == 0:
+            ax.set_ylabel("Absolute Distance (Error)")
+        ax.set_xlabel("Updatable Weights (%)")
+        ax.set_xticks(updatable_weights_ls)
+        ax.ticklabel_format(style='plain', axis='x')
+        ax.tick_params(axis='x', rotation=45, labelsize=9)
+        ax.grid(True, alpha=0.3)
+    
+    # Row 2: Mean DAN Activation
+    row_idx = 2
+    for col_idx, (phase, phase_label) in enumerate(zip(phases, phase_labels)):
+        ax = axs[row_idx, col_idx]
+        for dales_law in [True, False]:
+            if phase in mean_DAN_activations_by_dales[dales_law] and len(mean_DAN_activations_by_dales[dales_law][phase]) > 0:
+                ax.plot(
+                    updatable_weights_ls,
+                    mean_DAN_activations_by_dales[dales_law][phase],
+                    label=dales_labels[dales_law],
+                    color=phase_colors[phase],
+                    linestyle='-',
+                    linewidth=2,
+                    marker='o',
+                    markersize=2,
+                    alpha=dales_alpha[dales_law]
+                )
+        ax.legend()
+        ax.set_title(f"Mean DAN Activation - {phase_label}")
+        if col_idx == 0:
+            ax.set_ylabel("Mean DAN Activation")
+        ax.set_xlabel("Updatable Weights (%)")
+        ax.set_xticks(updatable_weights_ls)
+        ax.ticklabel_format(style='plain', axis='x')
+        ax.tick_params(axis='x', rotation=45, labelsize=9)
+        ax.grid(True, alpha=0.3)
+    
+    plt.savefig("updatable_weights_plot.png", dpi=300, bbox_inches='tight')
+    plt.show()
+
+
 
