@@ -291,13 +291,13 @@ class Corelease_Model(nn.Module):
         x = x.view(x.size(0), -1)  # Flatten input
 
         # Pass through the first layer, apply batch normalization and activation
-        x = self.EP(x)  # Apply EP (TopKLinear or nn.Linear)
+        x = self.EP(x)  # Apply EP (TopKLinear or nn.Linear) aka ep neurons
         self.EP_current_act = x
         
         x = self.bn1(x)  # Apply BatchNorm1d
 
         # Pass through the second layer, apply batch normalization and activation
-        x = self.LHb(x)  # Apply LHb (TopKLinear or nn.Linear)
+        x = self.LHb(x)  # Apply LHb (TopKLinear or nn.Linear) aka LHb neurons
         x = self.bn2(x)  # Apply BatchNorm1d
 
         # Apply dropout for regularization
@@ -305,7 +305,7 @@ class Corelease_Model(nn.Module):
             x = self.dropout(x)
 
         # Pass through the final layer
-        x = self.DAN(x)
+        x = self.DAN(x)  # Apply DAN (TopKLinear or nn.Linear) aka dan neurons
 
         # Return logits for inference
         return x
